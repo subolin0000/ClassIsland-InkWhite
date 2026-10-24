@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+<PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><RollForward>LatestPatch</RollForward></PropertyGroup>
+<ItemGroup>
+<PackageReference Include="ClassIsland.PluginSdk" Version="2.1.0.1" />
+<PackageReference Include="Avalonia.Headless" Version="11.3.17" />
+<PackageReference Include="Avalonia.Markup.Xaml.Loader" Version="11.3.17" />
+</ItemGroup>
+</Project>
+

@@ -1,0 +1,11 @@
+id: local.classisland.adaptive-text
+name: 墨白 · InkWhite
+description: 背景稳定后，统一切换文字、天气图标与分割线的黑白颜色。
+entranceAssembly: AdaptiveText.dll
+apiVersion: 2.1.0.1
+version: 0.1.7.0
+author: 苏泊林 / subolin
+icon: icon.png
+supportedOSPlatforms:
+  - Windows
+
