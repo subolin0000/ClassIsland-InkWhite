@@ -131,7 +131,7 @@ Check(((ISolidColorBrush)weatherIcon.Foreground!).Color==Colors.Black,"weather f
 Check(((ISolidColorBrush)separatorLine.Stroke!).Color==Colors.Black,"official separator reaches black with text and weather");
 Check(separatorLine.StrokeThickness==originalThickness && separatorLine.Opacity==originalOpacity,"separator width and opacity remain unchanged");
 Check(((ISolidColorBrush)weatherPath.Fill!).Color==Colors.Black && ((ISolidColorBrush)weatherPath.Stroke!).Color==Colors.Black,"weather vector fill and stroke reach unified target");
-Check(((ISolidColorBrush)notificationText.Foreground!).Color==Colors.Black && ((ISolidColorBrush)notificationBorder.GetValue(Avalonia.Controls.Documents.TextElement.ForegroundProperty)!).Color==Colors.Black,"notification mask text and inherited foreground reach unified target");
+Check(((ISolidColorBrush)notificationText.Foreground!).Color==Colors.Black && ((ISolidColorBrush)notificationBorder.GetValue(Avalonia.Controls.Documents.TextElement.ForegroundProperty)!).Color==Colors.Yellow,"notification text recolors without repainting glass/material borders");
 Check(((ISolidColorBrush)rainyIcon.Foreground!).Color==Colors.Orange,"rainy weather keeps ClassIsland's semantic accent color");
 Check(!(bool)groupType.GetProperty("Animating")!.GetValue(group)!,"fade stops instead of continuously repainting static classroom");
 groupType.GetMethod("SetTarget")!.Invoke(group,[true,13000L,2000]); groupType.GetMethod("Tick")!.Invoke(group,[14000L]);
@@ -148,7 +148,7 @@ Application.Current.Resources["TextFillColorSecondaryBrush"]=Brushes.Salmon;
 Check(((ISolidColorBrush)separatorLine.Stroke!).Color==Colors.Salmon,"separator restores latest dynamic theme stroke after preset stops");
 Check(((ISolidColorBrush)text.Foreground!).Color==Colors.Blue && ((ISolidColorBrush)run.Foreground!).Color==Colors.Red,"leaving classroom preset restores plain and rich text");
 Check(((ISolidColorBrush)weatherIcon.Foreground!).Color==Colors.Orange && ((ISolidColorBrush)weatherPath.Fill!).Color==Colors.Cyan,"leaving classroom preset restores original weather colors");
-Check(((ISolidColorBrush)notificationText.Foreground!).Color==Colors.Yellow && ((ISolidColorBrush)notificationBorder.GetValue(Avalonia.Controls.Documents.TextElement.ForegroundProperty)!).Color==Colors.Yellow,"notification mask restores its on-accent foreground");
+Check(((ISolidColorBrush)notificationText.Foreground!).Color==Colors.Yellow && ((ISolidColorBrush)notificationBorder.GetValue(Avalonia.Controls.Documents.TextElement.ForegroundProperty)!).Color==Colors.Yellow,"notification mask restores its on-accent foreground without changing host border");
 SetPseudoClass(rainyWeather,":rainy",false); Dispatcher.UIThread.RunJobs();
 var rainToggleGroup=Activator.CreateInstance(groupType)!;
 groupType.GetMethod("SyncTargets")!.Invoke(rainToggleGroup,[fakeWindow,25000L]);
@@ -178,19 +178,47 @@ Check(((ISolidColorBrush)themeText.Foreground!).Color==Colors.Blue,"theme switch
 Check(((string)service.GetType().GetProperty("Status")!.GetValue(service)!).Contains("主题"),"service reports the theme-switch recovery state");
 Application.Current.RequestedThemeVariant=themeBefore; Dispatcher.UIThread.RunJobs();
 
+fakeWindow.Content=null; Dispatcher.UIThread.RunJobs();
+var effectText=new TextBlock{Text="Effect",Foreground=Brushes.Blue,Effect=new BlurEffect{Radius=1}};
+var originalGlowHostEffect=effectText.Effect;
+var plainGlowText=new TextBlock{Text="Glow",Foreground=Brushes.Blue};
+var glowPanel=new StackPanel(); glowPanel.Children.Add(effectText); glowPanel.Children.Add(plainGlowText);
+fakeWindow.Content=new FakeComponent { Content=glowPanel }; fakeWindow.UpdateLayout(); Dispatcher.UIThread.RunJobs();
 var glowGroup=Activator.CreateInstance(groupType,new object[]{true})!;
 groupType.GetMethod("SyncTargets")!.Invoke(glowGroup,[fakeWindow,30000L]);
-Check(ReferenceEquals(themeText.Effect,originalThemeEffect) && weatherIcon.Effect==null,"startup does not attach a glow before the first color target");
+Check(ReferenceEquals(effectText.Effect,originalGlowHostEffect) && plainGlowText.Effect==null,"startup does not attach a glow before the first color target");
 groupType.GetMethod("SetTarget")!.Invoke(glowGroup,[false,30000L,2000]);
-Check(themeText.Effect is DropShadowEffect && weatherIcon.Effect==null,"glow covers only the current window targets");
-Check(((DropShadowEffect)themeText.Effect!).Color==Colors.White,"black text target starts with an immediately opposite white glow");
-Check(ReferenceEquals(themeText.Effect,originalThemeEffect)==false,"startup no longer leaves glow and text on the same black color");
+Check(ReferenceEquals(effectText.Effect,originalGlowHostEffect) && plainGlowText.Effect is DropShadowEffect,"host effects are preserved while plain text receives glow");
+Check(((DropShadowEffect)plainGlowText.Effect!).Color==Colors.White,"black text target starts with an immediately opposite white glow");
 groupType.GetMethod("Tick")!.Invoke(glowGroup,[32000L]);
-Check(((DropShadowEffect)themeText.Effect!).Color==Colors.White,"black target retains its white glow during fade completion");
+Check(((DropShadowEffect)plainGlowText.Effect!).Color==Colors.White,"black target retains its white glow during fade completion");
 groupType.GetMethod("SetTarget")!.Invoke(glowGroup,[true,33000L,2000]); groupType.GetMethod("Tick")!.Invoke(glowGroup,[35000L]);
-Check(((DropShadowEffect)themeText.Effect!).Color==Colors.Black,"white target receives black glow");
+Check(((DropShadowEffect)plainGlowText.Effect!).Color==Colors.Black,"white target receives black glow");
 ((IDisposable)glowGroup).Dispose();
-Check(ReferenceEquals(themeText.Effect,originalThemeEffect) && weatherIcon.Effect==null,"turning glow off restores original effects");
+Check(ReferenceEquals(effectText.Effect,originalGlowHostEffect) && plainGlowText.Effect==null,"turning glow off restores original effects");
+
+fakeWindow.Content=null; Dispatcher.UIThread.RunJobs();
+var glassText=new TextBlock{Text="Glass",Foreground=Brushes.Blue};
+var glassBorder=new Border{BoxShadow=BoxShadows.Parse("0 2 16 0 #30000000"),Child=glassText};
+var originalGlassShadow=glassBorder.BoxShadow.ToString();
+fakeWindow.Content=new FakeComponent{Content=glassBorder}; fakeWindow.UpdateLayout(); Dispatcher.UIThread.RunJobs();
+var glassGroup=Activator.CreateInstance(groupType,true)!;
+groupType.GetMethod("SyncTargets")!.Invoke(glassGroup,[fakeWindow,40000L]);
+groupType.GetMethod("SetTarget")!.Invoke(glassGroup,[false,40000L,2000]); groupType.GetMethod("Tick")!.Invoke(glassGroup,[42000L]);
+Check(glassBorder.Effect==null && glassText.Effect==null,"glass material suppresses per-control glow");
+Check(glassBorder.BoxShadow.ToString()==originalGlassShadow,"glass material border stays unchanged");
+Check(((ISolidColorBrush)glassText.Foreground!).Color==Colors.Black,"text coloring still works under glass material");
+((IDisposable)glassGroup).Dispose();
+
+var slideText=new TextBlock{Text="Slide",Foreground=Brushes.Blue};
+var slide=new ClassIsland.Controls.Components.SlideComponent{Content=slideText};
+fakeWindow.Content=new FakeComponent{Content=slide}; fakeWindow.UpdateLayout(); Dispatcher.UIThread.RunJobs();
+var slideGroup=Activator.CreateInstance(groupType,true)!;
+groupType.GetMethod("SyncTargets")!.Invoke(slideGroup,[fakeWindow,50000L]);
+groupType.GetMethod("SetTarget")!.Invoke(slideGroup,[false,50000L,2000]); groupType.GetMethod("Tick")!.Invoke(slideGroup,[52000L]);
+Check(slideText.Effect==null,"carousel content keeps uniform edges without per-child glow");
+Check(((ISolidColorBrush)slideText.Foreground!).Color==Colors.Black,"carousel text still receives unified color");
+((IDisposable)slideGroup).Dispose();
 Check(AvaloniaRuntimeXamlLoader.Load("<Styles xmlns=\"https://github.com/avaloniaui\"/>") is Styles,"theme reload still succeeds after classroom and glow cleanup");
 fakeWindow.Close();
 Console.WriteLine("All stable compatibility checks passed.");
@@ -226,6 +254,8 @@ namespace ClassIsland.Controls { public sealed class MainWindowLine : ContentCon
 
 
 namespace ClassIsland.Controls { public sealed class WeatherPackIconControl : UserControl { } }
+
+namespace ClassIsland.Controls.Components { public sealed class SlideComponent : ContentControl { } }
 
 
 

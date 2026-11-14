@@ -49,7 +49,7 @@ public sealed class SettingsPage : SettingsPageBase
                 new TextBlock { Text = "严格黑白：只在足够深的背景上用纯白字，中灰、浅灰与浅色背景用纯黑。渐变仅在切换过程中出现。", TextWrapping = TextWrapping.Wrap },
                 new TextBlock { Text = "检测结合元素复杂度：复杂背景优先参考主导元素，避免背景文字干扰；低开销分桶统计，不额外截屏。", TextWrapping = TextWrapping.Wrap },
                 enabled, glow,
-                new TextBlock { Text = "柔光使用反色软边，开启会增加绘制开销；关闭更适合低配置电脑。", TextWrapping = TextWrapping.Wrap },
+                new TextBlock { Text = "柔光只作用于文字和图标；遇到玻璃材质或轮播容器会自动避让，避免抹平主题材质或造成边缘发光不一致。", TextWrapping = TextWrapping.Wrap },
                 new TextBlock { Text = "颜色预设" }, preset,
                 new TextBlock { Text = "黑白均衡沿用标准判断；黑色为主只在更深背景用白字；白色为主在稍暗背景也用白字。", TextWrapping = TextWrapping.Wrap },
                 new TextBlock { Text = "等待背景稳定（秒；0 = 不等待，立即跟随背景）" }, quiet,

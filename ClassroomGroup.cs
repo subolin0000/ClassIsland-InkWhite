@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Documents;
+using Avalonia.Controls.Presenters;
 using Avalonia.Controls.Shapes;
 using Avalonia.Data;
 using Avalonia.Media;
@@ -24,6 +25,7 @@ internal sealed class ClassroomGroup : IDisposable
     private double[] _samples = new double[21 * 32];
     private int _sampleCount;
     private long _syncedAt = long.MinValue;
+    private bool _glowBlocked;
     private long _started;
     private int _duration;
     private Color? _target;
@@ -67,30 +69,34 @@ internal sealed class ClassroomGroup : IDisposable
     {
         if (_syncedAt != long.MinValue && now - _syncedAt < 1000) return;
         _syncedAt = now; _seen.Clear(); _glowSeen.Clear();
-        foreach (var control in window.GetVisualDescendants().OfType<Control>())
+        var controls = window.GetVisualDescendants().OfType<Control>().ToArray();
+        // Glass themes use BoxShadow/material layers; slide containers use ContentPresenter animations.
+        // A per-child Effect rasterizes those surfaces and flattens the host material.
+        _glowBlocked = controls.Any(control => IsCarouselLike(control) || IsMaterialHost(control));
+        foreach (var control in controls)
         {
             var ancestors = control.GetVisualAncestors().ToArray();
             // Notification masks/overlays live under MainWindowLine instead of ComponentBase.
             if (!ancestors.Any(v => v is ComponentBase || IsNotificationHost(v))) continue;
+            bool notification = ancestors.Any(IsNotificationHost) || IsNotificationHost(control);
             if (control is TextBlock text)
             {
                 Add(text, TextBlock.ForegroundProperty, now);
                 if (text.Inlines != null) foreach (var inline in text.Inlines) AddInline(inline, now);
             }
-            // Built-in Lucide/Fluent/SF weather templates use foreground-aware IconElements.
-            if (ancestors.Any(v => IsWeather(v) || IsSeparator(v)) || IsWeather(control) || IsSeparator(control))
+            // Built-in Lucide/Fluent/SF weather templates and notification icons use foreground-aware IconElements.
+            bool vectorContext = ancestors.Any(v => IsWeather(v) || IsSeparator(v)) || IsWeather(control) || IsSeparator(control);
+            if (vectorContext || notification)
             {
                 if (control is IconElement) Add(control, IconElement.ForegroundProperty, now);
                 if (control is FAIconElement) Add(control, FAIconElement.ForegroundProperty, now);
-                if (control is Shape shape)
-                {
-                    if (shape.Fill != null) Add(shape, Shape.FillProperty, now);
-                    if (shape.Stroke != null) Add(shape, Shape.StrokeProperty, now);
-                }
             }
-            // The notification mask sets TextElement.Foreground on its host border; control that inherited brush too.
-            if (ancestors.Any(IsNotificationHost) && control is Border)
-                Add(control, TextElement.ForegroundProperty, now);
+            // Only weather/separator vector shapes are recolored. Never repaint host borders or glass surfaces.
+            if (vectorContext && control is Shape shape)
+            {
+                if (shape.Fill != null) Add(shape, Shape.FillProperty, now);
+                if (shape.Stroke != null) Add(shape, Shape.StrokeProperty, now);
+            }
         }
         foreach (var key in _paints.Keys.Where(k => !_seen.Contains(k)).ToArray()) { _paints[key].Dispose(); _paints.Remove(key); }
         SyncGlowTargets();
@@ -98,7 +104,7 @@ internal sealed class ClassroomGroup : IDisposable
     private void SyncGlowTargets()
     {
         _glowSeen.Clear();
-        if (!_glowEnabled || _target == null)
+        if (!_glowEnabled || _target == null || _glowBlocked)
         {
             foreach (var binding in _glows.Values.ToArray()) binding.Dispose();
             _glows.Clear();
@@ -106,10 +112,45 @@ internal sealed class ClassroomGroup : IDisposable
         }
         foreach (var visual in _paints.Keys.Select(key => key.Item1).OfType<Visual>().Distinct())
         {
+            if (!CanGlow(visual) || HasProtectedEffect(visual)) continue;
             _glowSeen.Add(visual);
             if (!_glows.ContainsKey(visual)) _glows.Add(visual, visual.Bind(Visual.EffectProperty, new EffectSource(_glow), BindingPriority.Animation));
         }
         foreach (var visual in _glows.Keys.Where(v => !_glowSeen.Contains(v)).ToArray()) { _glows[visual].Dispose(); _glows.Remove(visual); }
+    }
+    private static bool CanGlow(Visual visual) => visual is TextBlock || visual is IconElement || visual is FAIconElement;
+    private static bool IsCarouselLike(Visual visual)
+    {
+        var name = visual.GetType().FullName ?? "";
+        return visual is Carousel || name.Contains("SlideComponent", StringComparison.Ordinal) || name.Contains("Carousel", StringComparison.Ordinal);
+    }
+    private static bool IsMaterialHost(Visual visual)
+    {
+        if (visual.GetValue(Visual.EffectProperty) is not null && !CanGlow(visual)) return true;
+        if (visual is Border border && border.GetValue(Border.BoxShadowProperty).Count > 0) return true;
+        if (visual is ContentPresenter presenter && presenter.GetValue(ContentPresenter.BoxShadowProperty).Count > 0) return true;
+        if (visual is Control control)
+        {
+            foreach (var name in control.Classes)
+            {
+                if (name.Contains("line-background", StringComparison.OrdinalIgnoreCase) ||
+                    name.Contains("glass", StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+        }
+        return false;
+    }
+    private bool HasProtectedEffect(Visual visual)
+    {
+        var current = visual.GetValue(Visual.EffectProperty);
+        if (current is not null && !ReferenceEquals(current, _glow)) return true;
+        foreach (var ancestor in visual.GetVisualAncestors())
+        {
+            var effect = ancestor.GetValue(Visual.EffectProperty);
+            if (effect is not null && !ReferenceEquals(effect, _glow)) return true;
+            if (IsCarouselLike(ancestor) || IsMaterialHost(ancestor)) return true;
+        }
+        return false;
     }
     private static bool IsWeather(Visual visual) => visual.GetType().FullName is "ClassIsland.Controls.WeatherPackIconControl" or "ClassIsland.Controls.WeatherRangePackIconControl" or "ClassIsland.Controls.Components.WeatherComponent";
     private static bool IsSeparator(Visual visual) => visual.GetType().FullName == "ClassIsland.Controls.Components.SeparatorComponent";
