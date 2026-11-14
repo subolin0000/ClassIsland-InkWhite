@@ -1,38 +1,70 @@
-<img src="icon.png" width="88" align="right" alt="墨白图标" />
+![墨白宣传海报](poster.png)
 
 # 墨白 · InkWhite
 
-**仅适配 ClassIsland 2.1.0.1。插件代码由 GPT 生成。**
+> 仅适配 ClassIsland 2.1.0.1。插件代码由 GLM 生成，其他版本需另行适配。
 
-让课堂组件，随背景清晰呈现。
+## 一句话
 
-ClassIsland 插件。背景稳定后，文字、天气图标和分割线会缓慢统一变为黑色或白色，减少屏幕频繁变色带来的干扰。
+**明处落墨，暗处留白。**
 
-- 默认背景稳定 **3 秒**后，用 **2 秒**完成渐变，时间可调。
-- 深色背景用白字，中灰、浅灰和浅色背景用黑字。
-- 描边 / 柔光独立开关，**默认关闭**。
+墨白是 ClassIsland 的配色插件。背景稳定后，通知遮罩、通知正文、文字、富文本、天气图标和分割线会统一切换为黑色或白色，使高透明度界面中的信息保持清晰。
 
-**搭配建议：配合 ClassIsland 的 Liquid Glass 主题并开启高透明度，效果更好。**
+## 适用范围
+
+- 通知遮罩与通知正文
+- 文字与富文本
+- 天气图标
+- 分割线
+
+## 工作方式
+
+- 背景稳定后再调整颜色，避免频繁变化。
+- 默认等待 **3 秒**、渐变 **2 秒**；等待时间设为 **0 秒**时立即响应。
+- 结合元素复杂度判断，复杂背景优先参考主导元素，减少背景文字干扰。
+- 深浅主题切换后，先恢复原主题颜色，再重新检测。
+- 不额外截屏，采用低开销统计，适合教室电脑长期运行。
+
+## 设置
+
+- **颜色预设**：黑白均衡、黑色为主、白色为主。
+- **描边 / 柔光**：独立开关，默认开启。
+- **变色节奏**：等待时间与渐变时长均可调整。
 
 ## 安装
 
-在仓库的 **Releases** 下载 `.cipx`，打开 ClassIsland → 设置 → 插件 → 从本地安装，安装后重启。
+1. 到本仓库的 **Releases** 页面下载 `.cipx` 文件。
+2. 打开 ClassIsland，进入 **设置 → 插件 → 从本地安装**。
+3. 选择下载好的 `.cipx`，安装后重启 ClassIsland。
 
-适配 **ClassIsland 2.1.0.1 / Windows 10 2004+ 或 Windows 11**。其他版本需另行验证。
+## 注意事项
 
-> 启用期间，ClassIsland 主窗口可能不会出现在截图、录屏或屏幕共享中；停用插件功能后恢复。自定义位图图标、自绘文字暂不支持。
+- 仅适配 **ClassIsland 2.1.0.1 / Windows 10 2004+ 或 Windows 11**。
+- 启用期间，ClassIsland 主窗口可能不会出现在部分截图、录屏或屏幕共享中。停用插件后恢复。
+- 自定义位图图标、自绘文字暂不支持。
 
 ## 构建
 
-安装 .NET 8 SDK 后，在 PowerShell 中运行：
+安装 .NET 8 SDK 后，在仓库目录运行：
 
 ```powershell
 ./build.ps1
 ```
 
-输出 `InkWhite-0.1.7-ci2.1.0.1.cipx`。项目保留原插件 ID，旧版用户可直接更新。
+输出 `InkWhite-0.1.9.0-ci2.1.0.1.cipx`。原插件 ID 与程序集名保持不变，旧版可直接更新。
 
-作者：[苏泊林 / subolin](https://github.com/subolin)
+## 源码与许可
 
-QQ：1570130637 · 邮箱：[subolinChina@outlook.com](mailto:subolinChina@outlook.com)
+- **源码**：本仓库中的全部源文件。上传 GitHub 时随提交一并推送。
+- **发布包**：`.cipx` 是编译后的插件包，用于安装；源码仍在仓库中。
+- **许可证**：MIT License。可自由使用、修改和分发，请保留版权声明与许可文本。
+- 许可文件：[LICENSE](LICENSE)
 
+## 作者
+
+**苏泊林 / subolin**
+
+QQ：1570130637  
+邮箱：[subolinChina@outlook.com](mailto:subolinChina@outlook.com)
+
+GitHub：[github.com/subolin0000/ClassIsland-InkWhite](https://github.com/subolin0000/ClassIsland-InkWhite)

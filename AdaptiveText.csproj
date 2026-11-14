@@ -6,14 +6,14 @@
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <CreateCipx>false</CreateCipx>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
-    <Version>0.1.7</Version>
+    <Version>0.1.9</Version>
     <Title>墨白 · InkWhite</Title>
     <Authors>苏泊林 / subolin</Authors>
   </PropertyGroup>
   <ItemGroup>
     <Compile Remove="tests/**/*.cs" />
     <PackageReference Include="ClassIsland.PluginSdk" Version="2.1.0.1" ExcludeAssets="runtime;native" />
-    <None Update="manifest.yml;README.md;icon.png" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="manifest.yml;README.md;poster.png;LICENSE;icon.png" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
 

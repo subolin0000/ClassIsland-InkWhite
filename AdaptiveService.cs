@@ -22,6 +22,7 @@ public sealed class AdaptiveService(SettingsStore settings, ILogger<AdaptiveServ
     private readonly Dictionary<Window, (nint Handle, uint Previous)> _windows = new();
     private readonly Dictionary<Window, (long ScannedAt, TextBlock[] Texts)> _treeCache = new();
     private readonly HashSet<Window> _failed = new();
+    private string? _themeVariant;
     public string Status { get; private set; } = "等待主窗口";
     public Task StartAsync(CancellationToken cancellationToken)
     {
@@ -59,6 +60,7 @@ public sealed class AdaptiveService(SettingsStore settings, ILogger<AdaptiveServ
         foreach (var entry in _windows.Values) NativeCapture.SetWindowDisplayAffinity(entry.Handle, entry.Previous);
         _windows.Clear(); _treeCache.Clear(); _failed.Clear();
         _capture?.Dispose(); _capture = null;
+        _themeVariant = null;
     }
     private void Tick(object? sender, EventArgs args)
     {
@@ -81,6 +83,15 @@ public sealed class AdaptiveService(SettingsStore settings, ILogger<AdaptiveServ
         if (!settings.Value.Enabled) { Status = "已停用，原始字体与截图行为已恢复"; return; }
         if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 19041)) { Status = "需要 Windows 10 2004 或更高版本"; return; }
         if (Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop) return;
+        // Theme switches may change every foreground/background under our animation bindings.
+        // Restore the host's live theme brush first, then restart background evaluation cleanly.
+        var themeVariant = Application.Current.ActualThemeVariant?.ToString();
+        if (_themeVariant != null && themeVariant != null && _themeVariant != themeVariant)
+        {
+            Status = "主题已切换，正在恢复并重新检测";
+            Reset(); return;
+        }
+        _themeVariant = themeVariant;
         long now = Environment.TickCount64;
 
         var live = desktop.Windows.Where(w => w.GetType().FullName == "ClassIsland.MainWindow" && w.IsVisible).ToHashSet();
@@ -159,14 +170,17 @@ public sealed class AdaptiveService(SettingsStore settings, ILogger<AdaptiveServ
             bool settled = false;
             if (group != null && frame.Sample(left, top, right - left, bottom - top, pixels))
             {
-                settled = group.Gate.Observe(pixels, now, settings.Value.ClassroomStableMs);
+                settled = group.Gate.Observe(pixels, now, settings.Value.ClassroomStableMs, settings.Value.Preset);
                 if (group.Gate.Waiting) group.Pause(now);
             }
             if (group != null && !settled) continue; // Classroom scores text only once, after the background settles.
             foreach (var region in regions)
             {
                 var text = region.Text;
-                if (!frame.Sample(region.X, region.Y, region.W, region.H, pixels)) continue;
+                // A small outer margin reduces the chance that glyph pixels dominate a complex wallpaper.
+                int marginX = Math.Min(16, Math.Max(2, region.W / 8));
+                int marginY = Math.Min(16, Math.Max(2, region.H / 8));
+                if (!frame.Sample(region.X - marginX, region.Y - marginY, region.W + marginX * 2, region.H + marginY * 2, pixels)) continue;
                 sampled.Add(text);
                 if (!_texts.TryGetValue(text, out var state)) _texts.Add(text, state = new TextState());
                 state.RefreshLayers(text, now);
@@ -184,9 +198,9 @@ public sealed class AdaptiveService(SettingsStore settings, ILogger<AdaptiveServ
                 }
                 group!.AddScores(state.Luminances);
             }
-            if (group != null && settled && group.GetBackgroundLuminance() is { } brightness)
+            if (group != null && settled && group.GetBackgroundDecision(settings.Value.Preset) is { } decision)
             {
-                bool white = Contrast.UseWhiteForLuminance(brightness);
+                bool white = decision.UseWhite;
                 group.SetTarget(white, now, settings.Value.ClassroomFadeMs);
                 if (group.Animating) _fadeTimer?.Start();
             }

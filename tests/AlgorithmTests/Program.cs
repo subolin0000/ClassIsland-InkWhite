@@ -11,11 +11,37 @@ Check(Contrast.Luminance(0,0,0)==0, "black luminance");
 for(int gray=0;gray<=255;gray++)
     if(Contrast.UseWhiteForLuminance(Contrast.Luminance((byte)gray,(byte)gray,(byte)gray))!=(gray<96)) throw new Exception("Gray boundary failure: "+gray);
 Check(true,"all 256 neutral grays obey one explicit boundary: below 96 white, 96+ black");
-Check(!Contrast.UseWhiteForLuminance(Contrast.Luminance(128,128,128)) && !Contrast.UseWhiteForLuminance(Contrast.Luminance(192,192,192)),"medium gray and light gray always select black");
+for(int gray=0;gray<=255;gray++)
+    if(Contrast.UseWhiteForLuminance(Contrast.Luminance((byte)gray,(byte)gray,(byte)gray),ColorPresets.Black)!=(gray<48)) throw new Exception("Black-preset boundary failure: "+gray);
+for(int gray=0;gray<=255;gray++)
+    if(Contrast.UseWhiteForLuminance(Contrast.Luminance((byte)gray,(byte)gray,(byte)gray),ColorPresets.White)!=(gray<160)) throw new Exception("White-preset boundary failure: "+gray);
+Check(ColorPresets.Normalize("Realtime")==ColorPresets.Balanced,"unknown preset names safely return to balanced");
+Check(!Contrast.UseWhiteForLuminance(Contrast.Luminance(128,128,128),ColorPresets.Black) && !Contrast.UseWhiteForLuminance(Contrast.Luminance(192,192,192),ColorPresets.Black),"black-biased preset keeps medium and light gray black");
+Check(Contrast.UseWhiteForLuminance(Contrast.Luminance(128,128,128),ColorPresets.White),"white-biased preset promotes medium gray to white");
 Check(Contrast.UseWhiteForLuminance(Contrast.Luminance(64,64,64)),"sufficiently dark background selects white");
+var uniformDark=Enumerable.Repeat(.10,21).ToArray();
+var uniformDecision=Contrast.AnalyzeBackground(uniformDark);
+Check(uniformDecision.Complexity<.15 && uniformDecision.UseWhite,"uniform dark background keeps the cheap median path");
+var mixedDarkBright=Enumerable.Repeat(.10,12).Concat(Enumerable.Repeat(.90,9)).ToArray();
+var mixedDecision=Contrast.AnalyzeBackground(mixedDarkBright);
+Check(mixedDecision.Complexity>.15 && mixedDecision.UseWhite,"complex mixed background trusts the dominant element over median color");
+var mostlyLight=Enumerable.Repeat(.90,18).Concat(Enumerable.Repeat(.10,3)).ToArray();
+Check(!Contrast.AnalyzeBackground(mostlyLight).UseWhite,"light background with minority dark elements still selects black");
 Check(!Contrast.UseWhiteForLuminance(Contrast.BackgroundLuminance([.4,.4,.4,.01,.4])),"a small dark detail cannot turn a mostly light background white");
 var nearDark=Enumerable.Repeat((byte)95,84).ToArray(); var nearLight=Enumerable.Repeat((byte)96,84).ToArray();
 Check(ClassroomBackgroundGate.Changed(nearLight,nearDark),"crossing the brightness boundary is detected even for a one-level change");
+var slightlyBrighter=Enumerable.Repeat((byte)104,84).ToArray();
+Check(!ClassroomBackgroundGate.Changed(slightlyBrighter,nearLight),"small background fluctuations no longer restart the quiet period");
+var localizedFlicker=(byte[])nearLight.Clone(); var broadChange=(byte[])nearLight.Clone();
+for(int point=0;point<7;point++) for(int channel=0;channel<3;channel++)
+{
+    if(point<4) localizedFlicker[point*4+channel]=160;
+    broadChange[point*4+channel]=160;
+}
+Check(!ClassroomBackgroundGate.Changed(localizedFlicker,nearLight),"changes confined to four sampling points are tolerated");
+Check(ClassroomBackgroundGate.Changed(broadChange,nearLight),"changes reaching one third of sampling points still restart waiting");
+Check(ClassroomBackgroundGate.Changed(Enumerable.Repeat((byte)159,84).ToArray(),Enumerable.Repeat((byte)160,84).ToArray(),ColorPresets.White),"preset-specific white boundary changes restart waiting");
+Check(!ClassroomBackgroundGate.Changed(Enumerable.Repeat((byte)80,84).ToArray(),Enumerable.Repeat((byte)90,84).ToArray(),ColorPresets.White),"small changes within the white-biased white zone are stable");
 var synthetic=new byte[NativeCapture.MaxWidth*6*4];
 for(int y=0;y<6;y++) for(int x=0;x<7;x++) for(int c=0;c<3;c++) synthetic[(y*NativeCapture.MaxWidth+x)*4+c]=255;
 var shared=new NativeCapture.Frame(synthetic,-100,-50,140,60,14,6);
@@ -37,20 +63,37 @@ Check(!gate.Observe(darkPixels,1801000,3000) && gate.Waiting,"new background ret
 gate.Observe(darkPixels,1802000,3000); gate.Observe(darkPixels,1803000,3000);
 Check(gate.Observe(darkPixels,1804000,3000),"new stable background produces one new request");
 var slow=new ClassroomBackgroundGate(); slow.Observe(darkPixels,0,3000); int early=0;
-for(int second=1;second<=10;second++) if(slow.Observe(Enumerable.Repeat((byte)(second*8),84).ToArray(),second*1000,3000)) early++;
-Check(early==0,"gradual background drift cannot masquerade as settled");
+for(int second=1;second<=10;second++) if(slow.Observe(Enumerable.Repeat((byte)(second*24),84).ToArray(),second*1000,3000)) early++;
+Check(early==0,"substantial gradual background drift cannot masquerade as settled");
+var immediate=new ClassroomBackgroundGate();
+Check(immediate.Observe(darkPixels,0,0) && !immediate.Waiting,"zero quiet time scores the very first frame without three-sample waiting");
+Check(immediate.Observe(classroomBright,1,0),"zero quiet time follows each changed background immediately");
 Check(ClassroomTween.Channel(0,255,0)==0 && ClassroomTween.Channel(0,255,1)==255 && ClassroomTween.Channel(0,255,.5)==128,"fade endpoints and intermediate gray are correct");
 Check(ClassroomTween.Progress(2000,1000,2000)==.5,"fade uses elapsed time rather than frame count");
 var path=Path.Combine(Path.GetTempPath(),"AdaptiveText-test-"+Guid.NewGuid(),"settings.json");
 try
 {
-    var store=new SettingsStore(path); store.Value.IntervalMs=1; store.Value.Enabled=false; store.Save();
+    var store=new SettingsStore(path);
+    Check(store.Value.ClassroomStableMs==3000,"existing configurations keep the three-second default");
+    Check(store.Value.Shadow,"fresh configurations default glow on");
+    Check(store.Value.Preset==ColorPresets.Balanced,"fresh configurations default to balanced preset");
+    store.Value.IntervalMs=1; store.Value.Enabled=false; store.Value.ClassroomStableMs=-1; store.Value.Preset=ColorPresets.White; store.Save();
     var reloaded=new SettingsStore(path);
     Check(!reloaded.Value.Enabled && reloaded.Value.IntervalMs==1000,"atomic settings round trip and bounds");
-    Check(!reloaded.Value.Shadow,"glow defaults off");
+    Check(reloaded.Value.ClassroomStableMs==0,"negative quiet time is normalized to the no-wait option");
+    Check(reloaded.Value.Preset==ColorPresets.White,"explicit preset choice persists");
+    reloaded.Value.Shadow=false; reloaded.Save();
+    Check(!new SettingsStore(path).Value.Shadow,"explicitly disabling glow persists");
     File.WriteAllText(path,"{\"Preset\":\"Realtime\",\"Shadow\":true,\"IntervalMs\":250}");
     var migrated=new SettingsStore(path);
-    Check(!migrated.Value.Shadow && migrated.Value.IntervalMs==1000,"legacy realtime config migrates to classroom with glow off");
+    Check(!migrated.Value.Shadow && migrated.Value.IntervalMs==1000,"legacy realtime config without format version migrates with glow off");
+    Check(migrated.Value.Preset==ColorPresets.Balanced,"legacy realtime preset name migrates to balanced");
+    File.WriteAllText(path,"{\"FormatVersion\":0,\"Shadow\":true}");
+    Check(!new SettingsStore(path).Value.Shadow,"format-0 legacy config keeps glow off");
+    File.WriteAllText(path,"{\"FormatVersion\":1,\"Shadow\":false}");
+    Check(!new SettingsStore(path).Value.Shadow,"saved format-1 glow-off setting remains off after update");
+    File.WriteAllText(path,"{\"Preset\":\"Unknown\"}");
+    Check(new SettingsStore(path).Value.Preset==ColorPresets.Balanced,"unknown future preset safely falls back to balanced");
     migrated.Value.Shadow=true; migrated.Save();
     Check(new SettingsStore(path).Value.Shadow,"explicitly enabling independent glow persists");
     File.WriteAllText(path,"broken json");

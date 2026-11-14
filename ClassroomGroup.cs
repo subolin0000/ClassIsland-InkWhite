@@ -21,30 +21,44 @@ internal sealed class ClassroomGroup : IDisposable
     public ClassroomBackgroundGate Gate { get; } = new();
     private readonly Dictionary<(AvaloniaObject, StyledProperty<IBrush?>), Paint> _paints = new();
     private readonly HashSet<(AvaloniaObject, StyledProperty<IBrush?>)> _seen = new();
-    private readonly double[] _sums = new double[21];
-    private int _scoreCount;
+    private double[] _samples = new double[21 * 32];
+    private int _sampleCount;
     private long _syncedAt = long.MinValue;
     private long _started;
     private int _duration;
     private Color? _target;
     public bool Animating { get; private set; }
     public bool? UseWhite { get; private set; }
-    public void BeginScores() { Array.Clear(_sums); _scoreCount = 0; }
-    public void AddScores(double[] luminances) { for (int i = 0; i < 21; i++) _sums[i] += luminances[i]; _scoreCount++; }
+    public void BeginScores() { _sampleCount = 0; }
+    public void AddScores(double[] luminances)
+    {
+        if (_sampleCount + luminances.Length > _samples.Length)
+            Array.Resize(ref _samples, Math.Max(_samples.Length * 2, _sampleCount + luminances.Length));
+        Array.Copy(luminances, 0, _samples, _sampleCount, luminances.Length);
+        _sampleCount += luminances.Length;
+    }
     public double? GetBackgroundLuminance()
     {
-        if (_scoreCount == 0) return null;
-        for (int i = 0; i < 21; i++) _sums[i] /= _scoreCount;
-        return Contrast.BackgroundLuminance(_sums);
+        if (_sampleCount == 0) return null;
+        return Contrast.BackgroundLuminance(_samples.AsSpan(0, _sampleCount));
+    }
+    public BackgroundDecision? GetBackgroundDecision(string? preset)
+    {
+        if (_sampleCount == 0) return null;
+        return Contrast.AnalyzeBackground(_samples.AsSpan(0, _sampleCount), preset);
     }
     public void SetTarget(bool white, long now, int duration)
     {
         var target = white ? Colors.White : Colors.Black;
         if (_target == target && (Animating || _paints.Values.All(p => p.AtTarget(target)))) return;
         Tick(now); // A new transition starts from the currently displayed intermediate color.
-        _glowFrom = _glow.Color; _glowTo = white ? Colors.Black : Colors.White;
+        _glowTo = white ? Colors.Black : Colors.White;
+        bool hadGlow = _glows.Count > 0;
+        _glowFrom = hadGlow ? _glow.Color : _glowTo;
+        _glow.Color = _glowFrom;
         _target = target; UseWhite = white; _started = now; _duration = duration;
         foreach (var paint in _paints.Values) paint.Begin(target);
+        SyncGlowTargets();
         Animating = _paints.Values.Any(p => !p.AtTarget(target));
         if (!Animating) { foreach (var paint in _paints.Values) paint.Tick(1); _glow.Color = _glowTo; }
     }
@@ -55,14 +69,16 @@ internal sealed class ClassroomGroup : IDisposable
         _syncedAt = now; _seen.Clear(); _glowSeen.Clear();
         foreach (var control in window.GetVisualDescendants().OfType<Control>())
         {
-            if (!control.GetVisualAncestors().Any(v => v is ComponentBase)) continue;
+            var ancestors = control.GetVisualAncestors().ToArray();
+            // Notification masks/overlays live under MainWindowLine instead of ComponentBase.
+            if (!ancestors.Any(v => v is ComponentBase || IsNotificationHost(v))) continue;
             if (control is TextBlock text)
             {
                 Add(text, TextBlock.ForegroundProperty, now);
                 if (text.Inlines != null) foreach (var inline in text.Inlines) AddInline(inline, now);
             }
             // Built-in Lucide/Fluent/SF weather templates use foreground-aware IconElements.
-            if (control.GetVisualAncestors().Any(v => IsWeather(v) || IsSeparator(v)) || IsWeather(control) || IsSeparator(control))
+            if (ancestors.Any(v => IsWeather(v) || IsSeparator(v)) || IsWeather(control) || IsSeparator(control))
             {
                 if (control is IconElement) Add(control, IconElement.ForegroundProperty, now);
                 if (control is FAIconElement) Add(control, FAIconElement.ForegroundProperty, now);
@@ -72,12 +88,35 @@ internal sealed class ClassroomGroup : IDisposable
                     if (shape.Stroke != null) Add(shape, Shape.StrokeProperty, now);
                 }
             }
+            // The notification mask sets TextElement.Foreground on its host border; control that inherited brush too.
+            if (ancestors.Any(IsNotificationHost) && control is Border)
+                Add(control, TextElement.ForegroundProperty, now);
+        }
+        foreach (var key in _paints.Keys.Where(k => !_seen.Contains(k)).ToArray()) { _paints[key].Dispose(); _paints.Remove(key); }
+        SyncGlowTargets();
+    }
+    private void SyncGlowTargets()
+    {
+        _glowSeen.Clear();
+        if (!_glowEnabled || _target == null)
+        {
+            foreach (var binding in _glows.Values.ToArray()) binding.Dispose();
+            _glows.Clear();
+            return;
+        }
+        foreach (var visual in _paints.Keys.Select(key => key.Item1).OfType<Visual>().Distinct())
+        {
+            _glowSeen.Add(visual);
+            if (!_glows.ContainsKey(visual)) _glows.Add(visual, visual.Bind(Visual.EffectProperty, new EffectSource(_glow), BindingPriority.Animation));
         }
         foreach (var visual in _glows.Keys.Where(v => !_glowSeen.Contains(v)).ToArray()) { _glows[visual].Dispose(); _glows.Remove(visual); }
-        foreach (var key in _paints.Keys.Where(k => !_seen.Contains(k)).ToArray()) { _paints[key].Dispose(); _paints.Remove(key); }
     }
     private static bool IsWeather(Visual visual) => visual.GetType().FullName is "ClassIsland.Controls.WeatherPackIconControl" or "ClassIsland.Controls.WeatherRangePackIconControl" or "ClassIsland.Controls.Components.WeatherComponent";
     private static bool IsSeparator(Visual visual) => visual.GetType().FullName == "ClassIsland.Controls.Components.SeparatorComponent";
+    private static bool IsNotificationHost(Visual visual) => visual.GetType().FullName == "ClassIsland.Controls.MainWindowLine";
+    private static bool IsRainyWeatherIcon(Visual visual) => visual.GetVisualAncestors().Any(ancestor =>
+        ancestor is Control control && control.GetType().FullName == "ClassIsland.Controls.WeatherPackIconControl" &&
+        control.Classes.Contains(":rainy"));
     private void AddInline(Inline inline, long now)
     {
         Add(inline, TextElement.ForegroundProperty, now);
@@ -85,14 +124,12 @@ internal sealed class ClassroomGroup : IDisposable
     }
     private void Add(AvaloniaObject owner, StyledProperty<IBrush?> property, long now)
     {
-        if (_glowEnabled && owner is Visual visual)
-        {
-            _glowSeen.Add(visual);
-            if (!_glows.ContainsKey(visual)) _glows.Add(visual, visual.Bind(Visual.EffectProperty, new EffectSource(_glow), BindingPriority.Animation));
-        }
+        // Rainy weather uses ClassIsland's semantic accent color; do not overwrite it with black/white.
+        if (owner is Visual { } ownerVisual && IsRainyWeatherIcon(ownerVisual)) return;
         var key = (owner, property); _seen.Add(key);
         if (_paints.ContainsKey(key)) return;
         var paint = new Paint(owner, property); _paints.Add(key, paint);
+        // Glow is attached only after the first target exists, so startup can never bind a same-color glow.
         if (_target is { } target)
         {
             // New clock/weather visuals join the current uniform color without restarting the group fade.

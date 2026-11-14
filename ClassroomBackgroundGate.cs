@@ -7,8 +7,14 @@ public sealed class ClassroomBackgroundGate
     private bool _dirty = true;
     private int _samples;
     public bool Waiting => _dirty;
-    public bool Observe(ReadOnlySpan<byte> rgb, long now, int quietMs)
+    public bool Observe(ReadOnlySpan<byte> rgb, long now, int quietMs, string? preset = null)
     {
+        // Zero means no quiet period: score every captured frame and let the shared fade follow it.
+        if (quietMs <= 0)
+        {
+            if (_anchor == null || _anchor.Length != rgb.Length) _anchor = new byte[rgb.Length];
+            rgb.CopyTo(_anchor); _since = now; _lastSample = now; _samples = 1; _dirty = false; return true;
+        }
         if (_anchor == null || _anchor.Length != rgb.Length)
         {
             _anchor = rgb.ToArray(); _since = now; _lastSample = now; _samples = 1; _dirty = true; return false;
@@ -16,7 +22,7 @@ public sealed class ClassroomBackgroundGate
         // Long sampling interruptions cannot be counted as observed stable time.
         if (now - _lastSample > Math.Max(3000, quietMs)) { _since = now; _samples = 0; _dirty = true; }
         _lastSample = now;
-        if (Changed(rgb, _anchor))
+        if (Changed(rgb, _anchor, preset))
         {
             rgb.CopyTo(_anchor); _since = now; _samples = 1; _dirty = true; return false;
         }
@@ -25,17 +31,18 @@ public sealed class ClassroomBackgroundGate
         _dirty = false; return true;
     }
     public void Pause(long now) { _since = now; _samples = 0; _dirty = true; }
-    public static bool Changed(ReadOnlySpan<byte> sample, ReadOnlySpan<byte> anchor)
+    public static bool Changed(ReadOnlySpan<byte> sample, ReadOnlySpan<byte> anchor, string? preset = null)
     {
         if (sample.Length != anchor.Length || sample.Length == 0) return true;
-        if (Contrast.UseWhiteForPixels(sample) != Contrast.UseWhiteForPixels(anchor)) return true;
+        if (Contrast.UseWhiteForPixels(sample, preset) != Contrast.UseWhiteForPixels(anchor, preset)) return true;
         double sum = 0; int changedPoints = 0;
         for (int i = 0; i < sample.Length; i += 4)
         {
             int distance = Math.Abs(sample[i] - anchor[i]) + Math.Abs(sample[i + 1] - anchor[i + 1]) + Math.Abs(sample[i + 2] - anchor[i + 2]);
-            sum += distance; if (distance > 3 * 32) changedPoints++;
+            sum += distance; if (distance > 3 * 48) changedPoints++;
         }
-        return sum / (sample.Length / 4 * 3) > 10 || changedPoints >= Math.Max(2, sample.Length / 4 / 4);
+        // Tolerate slight wallpaper motion and compression-like flicker instead of restarting the wait repeatedly.
+        return sum / (sample.Length / 4 * 3) > 16 || changedPoints >= Math.Max(3, sample.Length / 4 / 3);
     }
 }
 public static class ClassroomTween

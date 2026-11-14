@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Runtime.Loader;
+using Avalonia.Styling;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.VisualTree;
@@ -9,7 +10,6 @@ using Avalonia.Threading;
 using Avalonia.Headless;
 using Avalonia.Markup.Xaml;
 using Avalonia.Media;
-using Avalonia.Styling;
 using ClassIsland.Core.Abstractions;
 using ClassIsland.Core.Attributes;
 using ClassIsland.Core.Models.Plugin;
@@ -70,9 +70,17 @@ var manifest=new DeserializerBuilder().IgnoreUnmatchedProperties().WithNamingCon
 Check((string)manifest["apiVersion"]=="2.1.0.1" && (string)manifest["entranceAssembly"]=="AdaptiveText.dll","stable manifest matches host and assembly");
 foreach(var theme in new[]{"<Styles xmlns=\"https://github.com/avaloniaui\"><Style Selector=\"TextBlock\"><Setter Property=\"Foreground\" Value=\"Red\"/></Style></Styles>","<Styles xmlns=\"https://github.com/avaloniaui\"><Style Selector=\"Border\"><Setter Property=\"Background\" Value=\"#223344\"/></Style></Styles>"})
     Check(AvaloniaRuntimeXamlLoader.Load(theme,hostAssembly) is Styles,"runtime XAML theme loads after plugin initialization");
-Check(!page!.GetLogicalDescendants().OfType<ComboBox>().Any(),"removed realtime preset selector from settings");
+var presetBox=page!.GetLogicalDescendants().OfType<ComboBox>().Single();
+var presetItems=presetBox.Items.OfType<ComboBoxItem>().ToArray();
+Check(presetItems.Length==3 && presetItems.Select(i=>i.Content?.ToString()).SequenceEqual(new[]{"黑白均衡","黑色为主","白色为主"}),"settings page exposes exactly the three requested presets");
+Check(presetItems.Select(i=>(string?)i.Tag).SequenceEqual(new[]{"Balanced","Black","White"}),"preset option values match the stable color algorithms");
+Check(((ComboBoxItem?)presetBox.SelectedItem)?.Tag as string=="Balanced","settings page defaults to the balanced preset");
 var glowSwitch=page!.GetLogicalDescendants().OfType<CheckBox>().Single(c=>c.Content?.ToString()?.StartsWith("描边")==true);
-Check(glowSwitch.IsChecked==false,"independent glow switch defaults off");
+Check(glowSwitch.IsChecked==true,"independent glow switch defaults on");
+var quietInput=page!.GetLogicalDescendants().OfType<NumericUpDown>().Single(n=>n.Minimum==0 && n.Maximum==30);
+Check(quietInput.Value==3,"quiet time allows zero while preserving the three-second default");
+var githubLink=page!.GetLogicalDescendants().OfType<HyperlinkButton>().Single();
+Check(githubLink.NavigateUri?.AbsoluteUri=="https://github.com/subolin0000/ClassIsland-InkWhite","settings page links to the official GitHub repository");
 var store=provider.GetRequiredService(asm.GetType("AdaptiveText.SettingsStore")!);
 var options=store.GetType().GetProperty("Value")!.GetValue(store)!;
 store.GetType().GetMethod("Save")!.Invoke(store,null);
@@ -94,7 +102,15 @@ var weather=new ClassIsland.Controls.WeatherPackIconControl { Content=weatherPan
 ((FakeComponent)fakeWindow.Content!).Content=null; Dispatcher.UIThread.RunJobs();
 Application.Current!.Resources["TextFillColorSecondaryBrush"]=Brushes.Gray;
 var separator=(Control)Activator.CreateInstance(hostAssembly!.GetType("ClassIsland.Controls.Components.SeparatorComponent")!)!;
-var panel=new StackPanel(); panel.Children.Add(separator); panel.Children.Add(text); panel.Children.Add(rich); panel.Children.Add(weather);
+var notificationHost=new ClassIsland.Controls.MainWindowLine();
+var notificationBorder=new Border();
+notificationBorder.SetValue(Avalonia.Controls.Documents.TextElement.ForegroundProperty,Brushes.Yellow);
+var notificationText=new TextBlock { Text="Mask" };
+notificationBorder.Child=notificationText; notificationHost.Content=notificationBorder;
+var rainyIcon=new FluentAvalonia.UI.Controls.FontIcon { Glyph="r", Foreground=Brushes.Orange };
+var rainyWeather=new ClassIsland.Controls.WeatherPackIconControl();
+SetPseudoClass(rainyWeather,":rainy",true); rainyWeather.Content=rainyIcon;
+var panel=new StackPanel(); panel.Children.Add(separator); panel.Children.Add(text); panel.Children.Add(rich); panel.Children.Add(weather); panel.Children.Add(notificationHost); panel.Children.Add(rainyWeather);
 fakeWindow.Content=new FakeComponent { Content=panel }; fakeWindow.UpdateLayout(); Dispatcher.UIThread.RunJobs();
 var separatorLine=separator.GetVisualDescendants().OfType<Avalonia.Controls.Shapes.Line>().Single();
 Check(((ISolidColorBrush)separatorLine.Stroke!).Color==Colors.Gray,"actual official separator starts with dynamic theme stroke");
@@ -115,6 +131,8 @@ Check(((ISolidColorBrush)weatherIcon.Foreground!).Color==Colors.Black,"weather f
 Check(((ISolidColorBrush)separatorLine.Stroke!).Color==Colors.Black,"official separator reaches black with text and weather");
 Check(separatorLine.StrokeThickness==originalThickness && separatorLine.Opacity==originalOpacity,"separator width and opacity remain unchanged");
 Check(((ISolidColorBrush)weatherPath.Fill!).Color==Colors.Black && ((ISolidColorBrush)weatherPath.Stroke!).Color==Colors.Black,"weather vector fill and stroke reach unified target");
+Check(((ISolidColorBrush)notificationText.Foreground!).Color==Colors.Black && ((ISolidColorBrush)notificationBorder.GetValue(Avalonia.Controls.Documents.TextElement.ForegroundProperty)!).Color==Colors.Black,"notification mask text and inherited foreground reach unified target");
+Check(((ISolidColorBrush)rainyIcon.Foreground!).Color==Colors.Orange,"rainy weather keeps ClassIsland's semantic accent color");
 Check(!(bool)groupType.GetProperty("Animating")!.GetValue(group)!,"fade stops instead of continuously repainting static classroom");
 groupType.GetMethod("SetTarget")!.Invoke(group,[true,13000L,2000]); groupType.GetMethod("Tick")!.Invoke(group,[14000L]);
 groupType.GetMethod("Pause")!.Invoke(group,[14000L]); var paused=((ISolidColorBrush)text.Foreground!).Color;
@@ -130,19 +148,58 @@ Application.Current.Resources["TextFillColorSecondaryBrush"]=Brushes.Salmon;
 Check(((ISolidColorBrush)separatorLine.Stroke!).Color==Colors.Salmon,"separator restores latest dynamic theme stroke after preset stops");
 Check(((ISolidColorBrush)text.Foreground!).Color==Colors.Blue && ((ISolidColorBrush)run.Foreground!).Color==Colors.Red,"leaving classroom preset restores plain and rich text");
 Check(((ISolidColorBrush)weatherIcon.Foreground!).Color==Colors.Orange && ((ISolidColorBrush)weatherPath.Fill!).Color==Colors.Cyan,"leaving classroom preset restores original weather colors");
+Check(((ISolidColorBrush)notificationText.Foreground!).Color==Colors.Yellow && ((ISolidColorBrush)notificationBorder.GetValue(Avalonia.Controls.Documents.TextElement.ForegroundProperty)!).Color==Colors.Yellow,"notification mask restores its on-accent foreground");
+SetPseudoClass(rainyWeather,":rainy",false); Dispatcher.UIThread.RunJobs();
+var rainToggleGroup=Activator.CreateInstance(groupType)!;
+groupType.GetMethod("SyncTargets")!.Invoke(rainToggleGroup,[fakeWindow,25000L]);
+groupType.GetMethod("SetTarget")!.Invoke(rainToggleGroup,[false,25000L,2000]); groupType.GetMethod("Tick")!.Invoke(rainToggleGroup,[27000L]);
+Check(((ISolidColorBrush)rainyIcon.Foreground!).Color==Colors.Black,"non-rainy weather rejoins the unified black/white target");
+((IDisposable)rainToggleGroup).Dispose();
+Check(((ISolidColorBrush)rainyIcon.Foreground!).Color==Colors.Orange,"non-rainy weather toggle group restores the original icon brush");
+
+// A real theme switch must remove plugin bindings so ClassIsland can apply its latest theme brushes immediately.
+var themeText=new TextBlock{Text="Theme test",Foreground=Brushes.Blue,Effect=new BlurEffect{Radius=1}};
+var originalThemeEffect=themeText.Effect;
+fakeWindow.Content=new FakeComponent { Content=themeText }; fakeWindow.UpdateLayout(); Dispatcher.UIThread.RunJobs();
+var updateMethod=service.GetType().GetMethod("Update",BindingFlags.NonPublic|BindingFlags.Instance)!;
+updateMethod.Invoke(service,null);
+var serviceClassrooms=(System.Collections.IDictionary)service.GetType().GetField("_classrooms",BindingFlags.NonPublic|BindingFlags.Instance)!.GetValue(service)!;
+Check(serviceClassrooms.Count==1,"service has an active classroom group before switching themes");
+var themeBefore=Application.Current!.ActualThemeVariant;
+Check(themeBefore!=null,"theme variant is observable before switching themes");
+var requestedTheme=Equals(themeBefore,ThemeVariant.Dark)?ThemeVariant.Light:ThemeVariant.Dark;
+Application.Current.RequestedThemeVariant=requestedTheme; Dispatcher.UIThread.RunJobs();
+var themeAfter=Application.Current.ActualThemeVariant;
+Console.WriteLine($"Theme switch probe: before={themeBefore}, after={themeAfter}, requested={requestedTheme}");
+Check(themeAfter!=themeBefore,"opposite requested theme becomes the actual theme in the integration host");
+updateMethod.Invoke(service,null);
+Check(serviceClassrooms.Count==0,"theme switch clears active classroom bindings");
+Check(((ISolidColorBrush)themeText.Foreground!).Color==Colors.Blue,"theme switch restores the latest host text brush");
+Check(((string)service.GetType().GetProperty("Status")!.GetValue(service)!).Contains("主题"),"service reports the theme-switch recovery state");
+Application.Current.RequestedThemeVariant=themeBefore; Dispatcher.UIThread.RunJobs();
+
 var glowGroup=Activator.CreateInstance(groupType,new object[]{true})!;
 groupType.GetMethod("SyncTargets")!.Invoke(glowGroup,[fakeWindow,30000L]);
-Check(text.Effect is DropShadowEffect && weatherIcon.Effect is DropShadowEffect && separatorLine.Effect is DropShadowEffect,"optional glow covers text weather and separator");
-Check(ReferenceEquals(text.Effect,weatherIcon.Effect),"optional glow shares one effect resource");
-groupType.GetMethod("SetTarget")!.Invoke(glowGroup,[false,30000L,2000]); groupType.GetMethod("Tick")!.Invoke(glowGroup,[32000L]);
-Check(((DropShadowEffect)text.Effect!).Color==Colors.White,"black target receives white glow");
+Check(ReferenceEquals(themeText.Effect,originalThemeEffect) && weatherIcon.Effect==null,"startup does not attach a glow before the first color target");
+groupType.GetMethod("SetTarget")!.Invoke(glowGroup,[false,30000L,2000]);
+Check(themeText.Effect is DropShadowEffect && weatherIcon.Effect==null,"glow covers only the current window targets");
+Check(((DropShadowEffect)themeText.Effect!).Color==Colors.White,"black text target starts with an immediately opposite white glow");
+Check(ReferenceEquals(themeText.Effect,originalThemeEffect)==false,"startup no longer leaves glow and text on the same black color");
+groupType.GetMethod("Tick")!.Invoke(glowGroup,[32000L]);
+Check(((DropShadowEffect)themeText.Effect!).Color==Colors.White,"black target retains its white glow during fade completion");
 groupType.GetMethod("SetTarget")!.Invoke(glowGroup,[true,33000L,2000]); groupType.GetMethod("Tick")!.Invoke(glowGroup,[35000L]);
-Check(((DropShadowEffect)text.Effect!).Color==Colors.Black,"white target receives black glow");
+Check(((DropShadowEffect)themeText.Effect!).Color==Colors.Black,"white target receives black glow");
 ((IDisposable)glowGroup).Dispose();
-Check(ReferenceEquals(text.Effect,originalEffect) && weatherIcon.Effect==null,"turning glow off restores original effects");
+Check(ReferenceEquals(themeText.Effect,originalThemeEffect) && weatherIcon.Effect==null,"turning glow off restores original effects");
 Check(AvaloniaRuntimeXamlLoader.Load("<Styles xmlns=\"https://github.com/avaloniaui\"/>") is Styles,"theme reload still succeeds after classroom and glow cleanup");
 fakeWindow.Close();
 Console.WriteLine("All stable compatibility checks passed.");
+
+static void SetPseudoClass(Control control,string name,bool value)
+{
+    var property=typeof(StyledElement).GetProperty("PseudoClasses",BindingFlags.NonPublic|BindingFlags.Instance)!;
+    ((IPseudoClasses)property.GetValue(control)!).Set(name,value);
+}
 
 public class LifetimeProxy : DispatchProxy
 {
@@ -156,6 +213,8 @@ public class LifetimeProxy : DispatchProxy
 }
 public sealed class FakeComponent : ClassIsland.Core.Abstractions.Controls.ComponentBase { }
 namespace ClassIsland { public sealed class MainWindow : Window { } }
+
+namespace ClassIsland.Controls { public sealed class MainWindowLine : ContentControl { } }
 
 
 
